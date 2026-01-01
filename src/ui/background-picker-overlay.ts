@@ -23,6 +23,7 @@ export class BackgroundPickerOverlay {
 	private itemCount = 0;
 	private resizeObserver: ResizeObserver | null = null;
 	private pendingGridUpdate = false;
+	private renderToken = 0;
 
 	private readonly handleOverlayClick = (event: MouseEvent): void => {
 		if (event.target === this.overlayEl) {
@@ -57,7 +58,7 @@ export class BackgroundPickerOverlay {
 
 		// Keep the overlay self-contained so it can be torn down safely.
 		const overlay = document.createElement("div");
-		overlay.className = "anp-bg-picker-overlay";
+		overlay.className = "anp-bg-picker-overlay is-image-only";
 		overlay.addEventListener("click", this.handleOverlayClick);
 
 		const dialog = document.createElement("div");
@@ -138,6 +139,7 @@ export class BackgroundPickerOverlay {
 			return;
 		}
 
+		this.renderToken += 1;
 		this.overlayEl.removeEventListener("click", this.handleOverlayClick);
 		document.removeEventListener("keydown", this.handleKeydown);
 		window.removeEventListener("resize", this.handleResize);
@@ -184,6 +186,7 @@ export class BackgroundPickerOverlay {
 			return;
 		}
 
+		const token = (this.renderToken += 1);
 		this.gridEl.innerHTML = "";
 		this.statusEl.textContent = "Loading images...";
 
@@ -197,6 +200,10 @@ export class BackgroundPickerOverlay {
 				this.host.settings.serverBaseUrl,
 				this.host.settings.imageFolderPath
 			);
+		}
+
+		if (token !== this.renderToken || !this.gridEl || !this.statusEl) {
+			return;
 		}
 
 		if (result.errorMessage) {
@@ -253,6 +260,7 @@ export class BackgroundPickerOverlay {
 			await this.host.setBackgroundByRelativePath(item.relativePath);
 			this.updateSelection(item.relativePath);
 			new Notice("Background updated.");
+			this.close();
 		});
 
 		return tile;

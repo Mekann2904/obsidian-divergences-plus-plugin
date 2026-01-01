@@ -34,9 +34,6 @@ export function getVaultImageItems(
 	const trimmedBaseUrl = baseUrl.trim();
 	const rawFolderPath = folderPath.trim();
 
-	if (!trimmedBaseUrl) {
-		return {items: [], errorMessage: "Base URL is empty."};
-	}
 	if (!rawFolderPath) {
 		return {items: [], errorMessage: "Image folder path is empty."};
 	}
@@ -56,14 +53,17 @@ export function getVaultImageItems(
 
 	const items = files
 		.map((file) => {
-		const relativePath = getRelativePath(trimmedFolderPath, file.path);
-		return {
-			file,
-			relativePath,
-			url: buildUrlFromRelative(trimmedBaseUrl, relativePath),
-			displayName: file.basename,
-		};
-	})
+			const relativePath = getRelativePath(trimmedFolderPath, file.path);
+			const url = trimmedBaseUrl
+				? buildUrlFromRelative(trimmedBaseUrl, relativePath)
+				: app.vault.getResourcePath(file);
+			return {
+				file,
+				relativePath,
+				url,
+				displayName: file.basename,
+			};
+		})
 		.filter((item) => item.url.length > 0)
 		.sort((a, b) => a.displayName.localeCompare(b.displayName));
 
@@ -104,7 +104,9 @@ export async function getRemoteImageItems(baseUrl: string): Promise<ImageItemsRe
 			if (!filename || !isImageExtension(filename)) {
 				continue;
 			}
-			const relativePath = getRelativePathFromUrl(baseUrlNormalized, url);
+			const relativePath = decodePathSegments(
+				getRelativePathFromUrl(baseUrlNormalized, url)
+			);
 			items.push({
 				file: null,
 				relativePath,
@@ -171,7 +173,7 @@ function getRelativePath(folderPath: string, filePath: string): string {
 function encodePath(path: string): string {
 	return path
 		.split("/")
-		.map((segment) => encodeURIComponent(segment))
+		.map((segment) => encodeURIComponent(decodeURIComponentSafe(segment)))
 		.join("/");
 }
 
@@ -226,4 +228,11 @@ function decodeURIComponentSafe(value: string): string {
 	} catch {
 		return value;
 	}
+}
+
+function decodePathSegments(path: string): string {
+	return path
+		.split("/")
+		.map((segment) => decodeURIComponentSafe(segment))
+		.join("/");
 }

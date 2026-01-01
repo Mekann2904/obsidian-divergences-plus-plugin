@@ -37,7 +37,9 @@ export class MyPluginSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Base URL")
-			.setDesc("HTTP directory index URL (example: http://127.0.0.1:3000/wallpapers).")
+			.setDesc(
+				"HTTP directory index URL (required for HTTP mode; optional for vault mode)."
+			)
 			.addText((text) =>
 				text
 					.setPlaceholder("http://127.0.0.1:3000")

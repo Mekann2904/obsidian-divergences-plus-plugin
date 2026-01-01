@@ -2,7 +2,7 @@
  * Plugin entry point for the background picker.
  * Why: connects Obsidian lifecycle, settings, and UI actions.
  * Related: src/settings.ts, src/ui/background-picker-overlay.ts, src/utils/image-utils.ts */
-import {Plugin} from "obsidian";
+import {normalizePath, Plugin, TFile} from "obsidian";
 import {DEFAULT_SETTINGS, MyPluginSettings, MyPluginSettingTab} from "./settings";
 import {BackgroundPickerOverlay} from "./ui/background-picker-overlay";
 import {buildUrlFromRelative} from "./utils/image-utils";
@@ -49,9 +49,14 @@ export default class DivergencesPlusPlugin extends Plugin {
 		const baseUrl = this.settings.serverBaseUrl.trim();
 		const relativePath = this.settings.selectedImagePath.trim();
 		if (!baseUrl || !relativePath) {
-			return "";
+			if (this.settings.useRemoteIndex || !relativePath) {
+				return "";
+			}
 		}
-		return buildUrlFromRelative(baseUrl, relativePath);
+		if (baseUrl) {
+			return buildUrlFromRelative(baseUrl, relativePath);
+		}
+		return this.getLocalImageUrl(relativePath);
 	}
 
 	getCssVariableName(): string {
@@ -68,6 +73,21 @@ export default class DivergencesPlusPlugin extends Plugin {
 	clearCssBackground(): void {
 		const cssVar = this.getCssVariableName();
 		document.body.style.removeProperty(cssVar);
+	}
+
+	private getLocalImageUrl(relativePath: string): string {
+		const folderPath = this.settings.imageFolderPath.trim();
+		if (!folderPath) {
+			return "";
+		}
+		const normalizedFolder = normalizePath(folderPath);
+		const normalizedRelative = relativePath.trim().replace(/^\/+/, "");
+		const fullPath = normalizePath(`${normalizedFolder}/${normalizedRelative}`);
+		const file = this.app.vault.getAbstractFileByPath(fullPath);
+		if (!(file instanceof TFile)) {
+			return "";
+		}
+		return this.app.vault.getResourcePath(file);
 	}
 
 	async setBackgroundByRelativePath(relativePath: string): Promise<void> {

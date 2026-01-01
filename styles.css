@@ -116,12 +116,12 @@
 	text-overflow: ellipsis;
 }
 
-/* Image-only mode: hide all labels and controls. */
-.anp-bg-picker-header,
-.anp-bg-picker-info,
-.anp-bg-picker-controls,
-.anp-bg-picker-status,
-.anp-bg-picker-name {
+/* Image-only mode: hide all labels and controls when explicitly enabled. */
+.anp-bg-picker-overlay.is-image-only .anp-bg-picker-header,
+.anp-bg-picker-overlay.is-image-only .anp-bg-picker-info,
+.anp-bg-picker-overlay.is-image-only .anp-bg-picker-controls,
+.anp-bg-picker-overlay.is-image-only .anp-bg-picker-status,
+.anp-bg-picker-overlay.is-image-only .anp-bg-picker-name {
 	display: none;
 }
 
