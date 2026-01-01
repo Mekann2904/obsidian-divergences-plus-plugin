@@ -20,11 +20,18 @@ export class BackgroundPickerOverlay {
 	private gridEl: HTMLDivElement | null = null;
 	private statusEl: HTMLDivElement | null = null;
 	private infoEl: HTMLDivElement | null = null;
+	private itemCount = 0;
+	private resizeObserver: ResizeObserver | null = null;
 
 	private readonly handleOverlayClick = (event: MouseEvent): void => {
 		if (event.target === this.overlayEl) {
 			this.close();
 		}
+	};
+
+	private readonly handleResize = (): void => {
+		this.updateAspectRatio();
+		this.updateGridLayout();
 	};
 
 	private readonly handleKeydown = (event: KeyboardEvent): void => {
@@ -111,6 +118,7 @@ export class BackgroundPickerOverlay {
 		document.body.appendChild(overlay);
 		// Escape closes the picker even if focus is inside the grid.
 		document.addEventListener("keydown", this.handleKeydown);
+		window.addEventListener("resize", this.handleResize);
 
 		this.overlayEl = overlay;
 		this.dialogEl = dialog;
@@ -119,6 +127,7 @@ export class BackgroundPickerOverlay {
 		this.infoEl = info;
 
 		this.refreshInfo();
+		this.updateAspectRatio();
 		void this.renderGrid();
 		this.focusDialog();
 	}
@@ -130,6 +139,9 @@ export class BackgroundPickerOverlay {
 
 		this.overlayEl.removeEventListener("click", this.handleOverlayClick);
 		document.removeEventListener("keydown", this.handleKeydown);
+		window.removeEventListener("resize", this.handleResize);
+		this.resizeObserver?.disconnect();
+		this.resizeObserver = null;
 		this.overlayEl.remove();
 
 		this.overlayEl = null;
@@ -154,6 +166,16 @@ export class BackgroundPickerOverlay {
 		const baseUrl = this.host.settings.serverBaseUrl || "(not set)";
 		const mode = this.host.settings.useRemoteIndex ? "HTTP index" : "Vault";
 		this.infoEl.textContent = `Mode: ${mode} | Folder: ${folderPath} | Base URL: ${baseUrl}`;
+	}
+
+	private updateAspectRatio(): void {
+		if (!this.dialogEl) {
+			return;
+		}
+		const width = Math.max(window.innerWidth, 1);
+		const height = Math.max(window.innerHeight, 1);
+		// Match thumbnail aspect ratio to the current window size.
+		this.dialogEl.style.setProperty("--anp-bg-picker-aspect", `${width} / ${height}`);
 	}
 
 	private async renderGrid(): Promise<void> {
@@ -191,7 +213,10 @@ export class BackgroundPickerOverlay {
 			this.gridEl.appendChild(this.createTile(item));
 		}
 
+		this.itemCount = result.items.length;
 		this.updateSelection(this.host.settings.selectedImagePath);
+		this.ensureResizeObserver();
+		requestAnimationFrame(() => this.updateGridLayout());
 	}
 
 	private createTile(item: ImageItem): HTMLElement {
@@ -238,5 +263,89 @@ export class BackgroundPickerOverlay {
 			const isSelected = tile.dataset.relativePath === relativePath;
 			tile.classList.toggle("is-selected", isSelected);
 		}
+	}
+
+	private ensureResizeObserver(): void {
+		if (this.resizeObserver || !this.gridEl) {
+			return;
+		}
+		this.resizeObserver = new ResizeObserver(() => {
+			this.updateGridLayout();
+		});
+		this.resizeObserver.observe(this.gridEl);
+	}
+
+	private updateGridLayout(): void {
+		if (!this.gridEl || this.itemCount === 0) {
+			return;
+		}
+
+		const rect = this.gridEl.getBoundingClientRect();
+		if (rect.width <= 0 || rect.height <= 0) {
+			return;
+		}
+
+		const styles = getComputedStyle(this.gridEl);
+		const gap = this.parsePixelValue(styles.gap) ?? 12;
+		const aspect = Math.max(window.innerWidth / Math.max(window.innerHeight, 1), 0.1);
+		const layout = this.findBestGridLayout(
+			this.itemCount,
+			rect.width,
+			rect.height,
+			aspect,
+			gap
+		);
+
+		this.gridEl.style.setProperty("--anp-bg-picker-columns", `${layout.columns}`);
+		this.gridEl.style.setProperty("--anp-bg-picker-row-height", `${layout.rowHeight}px`);
+	}
+
+	private findBestGridLayout(
+		count: number,
+		width: number,
+		height: number,
+		aspect: number,
+		gap: number
+	): {columns: number; rowHeight: number} {
+		let bestColumns = 1;
+		let bestRowHeight = 0;
+		let bestArea = 0;
+
+		for (let columns = 1; columns <= count; columns += 1) {
+			const rows = Math.ceil(count / columns);
+			const totalGapWidth = gap * Math.max(columns - 1, 0);
+			const totalGapHeight = gap * Math.max(rows - 1, 0);
+			const availableWidth = width - totalGapWidth;
+			const availableHeight = height - totalGapHeight;
+			if (availableWidth <= 0 || availableHeight <= 0) {
+				continue;
+			}
+
+			const maxTileWidth = availableWidth / columns;
+			const maxTileHeight = availableHeight / rows;
+			const tileHeight = Math.min(maxTileHeight, maxTileWidth / aspect);
+			const tileWidth = tileHeight * aspect;
+			if (tileHeight <= 0 || tileWidth <= 0) {
+				continue;
+			}
+
+			const area = tileWidth * tileHeight;
+			if (area > bestArea) {
+				bestArea = area;
+				bestColumns = columns;
+				bestRowHeight = tileHeight;
+			}
+		}
+
+		if (bestRowHeight === 0) {
+			bestRowHeight = Math.max((height - gap * (count - 1)) / count, 1);
+		}
+
+		return {columns: bestColumns, rowHeight: bestRowHeight};
+	}
+
+	private parsePixelValue(value: string): number | null {
+		const parsed = Number.parseFloat(value);
+		return Number.isFinite(parsed) ? parsed : null;
 	}
 }
