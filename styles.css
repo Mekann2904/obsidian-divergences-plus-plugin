@@ -86,6 +86,8 @@
 	cursor: pointer;
 	transition: transform 120ms ease, box-shadow 120ms ease;
 	height: 100%;
+	content-visibility: auto;
+	contain-intrinsic-size: 180px 120px;
 }
 
 .anp-bg-picker-tile:hover {

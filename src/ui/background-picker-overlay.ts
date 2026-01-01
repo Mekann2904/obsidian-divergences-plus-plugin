@@ -22,6 +22,7 @@ export class BackgroundPickerOverlay {
 	private infoEl: HTMLDivElement | null = null;
 	private itemCount = 0;
 	private resizeObserver: ResizeObserver | null = null;
+	private pendingGridUpdate = false;
 
 	private readonly handleOverlayClick = (event: MouseEvent): void => {
 		if (event.target === this.overlayEl) {
@@ -31,7 +32,7 @@ export class BackgroundPickerOverlay {
 
 	private readonly handleResize = (): void => {
 		this.updateAspectRatio();
-		this.updateGridLayout();
+		this.requestGridUpdate();
 	};
 
 	private readonly handleKeydown = (event: KeyboardEvent): void => {
@@ -209,17 +210,21 @@ export class BackgroundPickerOverlay {
 		}
 
 		this.statusEl.textContent = "";
-		for (const item of result.items) {
-			this.gridEl.appendChild(this.createTile(item));
+		for (let index = 0; index < result.items.length; index += 1) {
+			const item = result.items[index];
+			if (!item) {
+				continue;
+			}
+			this.gridEl.appendChild(this.createTile(item, index));
 		}
 
 		this.itemCount = result.items.length;
 		this.updateSelection(this.host.settings.selectedImagePath);
 		this.ensureResizeObserver();
-		requestAnimationFrame(() => this.updateGridLayout());
+		this.requestGridUpdate();
 	}
 
-	private createTile(item: ImageItem): HTMLElement {
+	private createTile(item: ImageItem, index: number): HTMLElement {
 		const tile = document.createElement("button");
 		tile.type = "button";
 		tile.className = "anp-bg-picker-tile";
@@ -227,7 +232,13 @@ export class BackgroundPickerOverlay {
 
 		const img = document.createElement("img");
 		img.className = "anp-bg-picker-thumb";
-		img.loading = "lazy";
+		img.decoding = "async";
+		img.loading = index < 12 ? "eager" : "lazy";
+		if (index < 12) {
+			if ("fetchPriority" in img) {
+				(img as HTMLImageElement & {fetchPriority?: string}).fetchPriority = "high";
+			}
+		}
 		img.alt = item.displayName;
 		img.src = item.url;
 
@@ -270,9 +281,20 @@ export class BackgroundPickerOverlay {
 			return;
 		}
 		this.resizeObserver = new ResizeObserver(() => {
-			this.updateGridLayout();
+			this.requestGridUpdate();
 		});
 		this.resizeObserver.observe(this.gridEl);
+	}
+
+	private requestGridUpdate(): void {
+		if (this.pendingGridUpdate) {
+			return;
+		}
+		this.pendingGridUpdate = true;
+		requestAnimationFrame(() => {
+			this.pendingGridUpdate = false;
+			this.updateGridLayout();
+		});
 	}
 
 	private updateGridLayout(): void {
