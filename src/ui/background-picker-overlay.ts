@@ -24,6 +24,12 @@ export class BackgroundPickerOverlay {
 	private resizeObserver: ResizeObserver | null = null;
 	private pendingGridUpdate = false;
 	private renderToken = 0;
+	private renderQueue: {items: ImageItem[]; index: number; token: number} | null = null;
+	private selectedPath = "";
+	private selectedTile: HTMLButtonElement | null = null;
+	private cachedKey: string | null = null;
+	private cachedItems: ImageItem[] = [];
+	private cachedError = "";
 
 	private readonly handleOverlayClick = (event: MouseEvent): void => {
 		if (event.target === this.overlayEl) {
@@ -41,6 +47,19 @@ export class BackgroundPickerOverlay {
 			event.preventDefault();
 			this.close();
 		}
+	};
+
+	private readonly handleGridClick = (event: MouseEvent): void => {
+		const target = event.target as HTMLElement | null;
+		const tile = target?.closest<HTMLButtonElement>(".anp-bg-picker-tile");
+		if (!tile || !this.gridEl || !this.gridEl.contains(tile)) {
+			return;
+		}
+		const relativePath = tile.dataset.relativePath ?? "";
+		if (!relativePath) {
+			return;
+		}
+		void this.handleTileSelection(tile, relativePath);
 	};
 
 	constructor(app: App, host: BackgroundPickerHost) {
@@ -94,7 +113,7 @@ export class BackgroundPickerOverlay {
 		const refreshButton = document.createElement("button");
 		refreshButton.type = "button";
 		refreshButton.textContent = "Refresh";
-		refreshButton.addEventListener("click", () => void this.renderGrid());
+		refreshButton.addEventListener("click", () => void this.renderGrid(true));
 		controls.appendChild(refreshButton);
 
 		const clearButton = document.createElement("button");
@@ -102,7 +121,7 @@ export class BackgroundPickerOverlay {
 		clearButton.textContent = "Clear";
 		clearButton.addEventListener("click", async () => {
 			await this.host.clearBackgroundSelection();
-			this.updateSelection("");
+			this.setSelection("", null);
 			new Notice("Background cleared.");
 		});
 		controls.appendChild(clearButton);
@@ -121,6 +140,7 @@ export class BackgroundPickerOverlay {
 		// Escape closes the picker even if focus is inside the grid.
 		document.addEventListener("keydown", this.handleKeydown);
 		window.addEventListener("resize", this.handleResize);
+		grid.addEventListener("click", this.handleGridClick);
 
 		this.overlayEl = overlay;
 		this.dialogEl = dialog;
@@ -143,6 +163,7 @@ export class BackgroundPickerOverlay {
 		this.overlayEl.removeEventListener("click", this.handleOverlayClick);
 		document.removeEventListener("keydown", this.handleKeydown);
 		window.removeEventListener("resize", this.handleResize);
+		this.gridEl?.removeEventListener("click", this.handleGridClick);
 		this.resizeObserver?.disconnect();
 		this.resizeObserver = null;
 		this.overlayEl.remove();
@@ -152,6 +173,8 @@ export class BackgroundPickerOverlay {
 		this.gridEl = null;
 		this.statusEl = null;
 		this.infoEl = null;
+		this.renderQueue = null;
+		this.selectedTile = null;
 	}
 
 	private focusDialog(): void {
@@ -181,17 +204,26 @@ export class BackgroundPickerOverlay {
 		this.dialogEl.style.setProperty("--anp-bg-picker-aspect", `${width} / ${height}`);
 	}
 
-	private async renderGrid(): Promise<void> {
+	private async renderGrid(forceRefresh = false): Promise<void> {
 		if (!this.gridEl || !this.statusEl) {
 			return;
 		}
 
 		const token = (this.renderToken += 1);
 		this.gridEl.innerHTML = "";
+		// Keep selection state so tiles can mark themselves during batch rendering.
+		this.selectedPath = this.host.settings.selectedImagePath;
+		this.selectedTile = null;
+		this.renderQueue = null;
+		this.itemCount = 0;
 		this.statusEl.textContent = "Loading images...";
 
+		// Cache by settings so reopening the picker avoids a full scan.
+		const cacheKey = this.getCacheKey();
 		let result;
-		if (this.host.settings.useRemoteIndex) {
+		if (!forceRefresh && cacheKey === this.cachedKey) {
+			result = {items: this.cachedItems, errorMessage: this.cachedError};
+		} else if (this.host.settings.useRemoteIndex) {
 			result = await getRemoteImageItems(this.host.settings.serverBaseUrl);
 		} else {
 			// Resolve vault images and map them to server URLs.
@@ -208,27 +240,28 @@ export class BackgroundPickerOverlay {
 
 		if (result.errorMessage) {
 			this.statusEl.textContent = result.errorMessage;
+			this.cachedKey = cacheKey;
+			this.cachedItems = [];
+			this.cachedError = result.errorMessage;
 			return;
 		}
 
 		if (result.items.length === 0) {
 			this.statusEl.textContent = "No images found.";
+			this.cachedKey = cacheKey;
+			this.cachedItems = [];
+			this.cachedError = "";
 			return;
 		}
 
-		this.statusEl.textContent = "";
-		for (let index = 0; index < result.items.length; index += 1) {
-			const item = result.items[index];
-			if (!item) {
-				continue;
-			}
-			this.gridEl.appendChild(this.createTile(item, index));
-		}
-
+		this.cachedKey = cacheKey;
+		this.cachedItems = result.items;
+		this.cachedError = "";
 		this.itemCount = result.items.length;
-		this.updateSelection(this.host.settings.selectedImagePath);
+
 		this.ensureResizeObserver();
 		this.requestGridUpdate();
+		this.startTileRender(result.items, token);
 	}
 
 	private createTile(item: ImageItem, index: number): HTMLElement {
@@ -236,6 +269,10 @@ export class BackgroundPickerOverlay {
 		tile.type = "button";
 		tile.className = "anp-bg-picker-tile";
 		tile.dataset.relativePath = item.relativePath;
+		if (item.relativePath === this.selectedPath) {
+			tile.classList.add("is-selected");
+			this.selectedTile = tile;
+		}
 
 		const img = document.createElement("img");
 		img.className = "anp-bg-picker-thumb";
@@ -256,32 +293,97 @@ export class BackgroundPickerOverlay {
 		tile.appendChild(img);
 		tile.appendChild(name);
 
-		tile.addEventListener("click", async () => {
-			await this.host.setBackgroundByRelativePath(item.relativePath);
-			this.updateSelection(item.relativePath);
-			new Notice("Background updated.");
-			this.close();
-		});
-
 		return tile;
 	}
 
-	private updateSelection(relativePath: string): void {
-		if (!this.gridEl) {
+	private setSelection(relativePath: string, tile: HTMLButtonElement | null): void {
+		if (this.selectedTile) {
+			this.selectedTile.classList.remove("is-selected");
+		}
+		this.selectedTile = tile;
+		this.selectedPath = relativePath;
+		if (this.selectedTile) {
+			this.selectedTile.classList.add("is-selected");
+		}
+	}
+
+	private async handleTileSelection(
+		tile: HTMLButtonElement,
+		relativePath: string
+	): Promise<void> {
+		await this.host.setBackgroundByRelativePath(relativePath);
+		this.setSelection(relativePath, tile);
+		new Notice("Background updated.");
+		this.close();
+	}
+
+	private startTileRender(items: ImageItem[], token: number): void {
+		if (!this.gridEl || !this.statusEl) {
+			return;
+		}
+		this.renderQueue = {items, index: 0, token};
+		this.statusEl.textContent = `Loading 0 / ${items.length}...`;
+		this.scheduleTileRender();
+	}
+
+	private scheduleTileRender(): void {
+		if (!this.renderQueue) {
+			return;
+		}
+		const requestIdle = (
+			window as Window & {
+				requestIdleCallback?: (callback: () => void, options?: {timeout: number}) => number;
+			}
+		).requestIdleCallback;
+		// Render in idle slices so the UI stays responsive with many tiles.
+		if (requestIdle) {
+			requestIdle(() => this.renderTileBatch(), {timeout: 120});
+			return;
+		}
+		window.setTimeout(() => this.renderTileBatch(), 16);
+	}
+
+	private renderTileBatch(): void {
+		if (!this.gridEl || !this.statusEl || !this.renderQueue) {
 			return;
 		}
 
-		const tiles = this.gridEl.querySelectorAll<HTMLButtonElement>(
-			".anp-bg-picker-tile"
-		);
-		for (let index = 0; index < tiles.length; index += 1) {
-			const tile = tiles.item(index);
-			if (!tile) {
+		const {items, token} = this.renderQueue;
+		if (token !== this.renderToken) {
+			return;
+		}
+
+		const fragment = document.createDocumentFragment();
+		const batchSize = 24;
+		let rendered = 0;
+
+		while (rendered < batchSize && this.renderQueue.index < items.length) {
+			const item = items[this.renderQueue.index];
+			this.renderQueue.index += 1;
+			if (!item) {
 				continue;
 			}
-			const isSelected = tile.dataset.relativePath === relativePath;
-			tile.classList.toggle("is-selected", isSelected);
+			fragment.appendChild(this.createTile(item, this.renderQueue.index - 1));
+			rendered += 1;
 		}
+
+		this.gridEl.appendChild(fragment);
+
+		if (this.renderQueue.index < items.length) {
+			this.statusEl.textContent = `Loading ${this.renderQueue.index} / ${items.length}...`;
+			this.scheduleTileRender();
+			return;
+		}
+
+		this.statusEl.textContent = "";
+		this.renderQueue = null;
+	}
+
+	private getCacheKey(): string {
+		const mode = this.host.settings.useRemoteIndex ? "remote" : "vault";
+		const baseUrl = this.host.settings.serverBaseUrl.trim();
+		const folder = this.host.settings.imageFolderPath.trim();
+		return `${mode}|${baseUrl}|${folder}`;
 	}
 
 	private ensureResizeObserver(): void {
