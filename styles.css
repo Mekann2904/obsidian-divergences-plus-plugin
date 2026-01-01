@@ -84,15 +84,9 @@
 	overflow: hidden;
 	text-align: left;
 	cursor: pointer;
-	transition: transform 120ms ease, box-shadow 120ms ease;
 	height: 100%;
 	content-visibility: auto;
 	contain-intrinsic-size: 180px 120px;
-}
-
-.anp-bg-picker-tile:hover {
-	transform: translateY(-2px);
-	box-shadow: 0 10px 24px rgba(0, 0, 0, 0.25);
 }
 
 .anp-bg-picker-tile.is-selected {
