@@ -150,28 +150,14 @@ export default class DivergencesPlusPlugin extends Plugin {
 	getLinkedWhitelistInfo(): {enabled: boolean; files: string[]} {
 		const api = this.getLocalVaultServerApi();
 		if (!api || !this.settings.linkedServerEntryId) {
-			const fallbackEntry = api ? this.findMatchingServerEntry(api) : null;
-			if (!fallbackEntry) {
-				return {enabled: false, files: []};
-			}
-			return {
-				enabled: Boolean(fallbackEntry.enableWhitelist),
-				files: [...fallbackEntry.whitelistFiles],
-			};
+			return {enabled: false, files: []};
 		}
 		const entry = findLocalVaultServerEntry(
 			api.getServerEntries(),
 			this.settings.linkedServerEntryId
 		);
 		if (!entry) {
-			const fallbackEntry = this.findMatchingServerEntry(api);
-			if (!fallbackEntry) {
-				return {enabled: false, files: []};
-			}
-			return {
-				enabled: Boolean(fallbackEntry.enableWhitelist),
-				files: [...fallbackEntry.whitelistFiles],
-			};
+			return {enabled: false, files: []};
 		}
 		return {
 			enabled: Boolean(entry.enableWhitelist),
@@ -186,12 +172,13 @@ export default class DivergencesPlusPlugin extends Plugin {
 		whitelistFiles: string[];
 	} | null {
 		const api = this.getLocalVaultServerApi();
-		if (!api) {
+		if (!api || !this.settings.linkedServerEntryId) {
 			return null;
 		}
-		const entry =
-			findLocalVaultServerEntry(api.getServerEntries(), this.settings.linkedServerEntryId) ??
-			this.findMatchingServerEntry(api);
+		const entry = findLocalVaultServerEntry(
+			api.getServerEntries(),
+			this.settings.linkedServerEntryId
+		);
 		if (!entry) {
 			return null;
 		}
@@ -201,42 +188,6 @@ export default class DivergencesPlusPlugin extends Plugin {
 			whitelistEnabled: Boolean(entry.enableWhitelist),
 			whitelistFiles: [...entry.whitelistFiles],
 		};
-	}
-
-	private findMatchingServerEntry(api: LocalVaultServerApi): ReturnType<
-		typeof findLocalVaultServerEntry
-	> {
-		const entries = api.getServerEntries();
-		if (entries.length === 1) {
-			return entries[0] ?? null;
-		}
-
-		const baseUrl = this.settings.serverBaseUrl.trim();
-		if (baseUrl) {
-			const matches = entries.filter(
-				(entry) => buildLocalVaultServerBaseUrl(entry) === baseUrl
-			);
-			if (matches.length === 1) {
-				return matches[0] ?? null;
-			}
-		}
-
-		const folderPath = this.normalizeForCompare(this.settings.imageFolderPath);
-		if (folderPath) {
-			const matches = entries.filter((entry) => {
-				const entryPath = this.normalizeForCompare(entry.serveDir);
-				return entryPath === folderPath;
-			});
-			if (matches.length === 1) {
-				return matches[0] ?? null;
-			}
-		}
-
-		return null;
-	}
-
-	private normalizeForCompare(value: string): string {
-		return value.trim().replace(/\\/g, "/").replace(/\/+$/, "");
 	}
 
 	async syncFromLinkedServer(): Promise<void> {

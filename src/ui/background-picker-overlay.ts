@@ -2,7 +2,7 @@
  * Custom overlay that shows background images in a tile grid.
  * Why: provides a picker without relying on Obsidian's Modal.
  * Related: src/main.ts, src/settings.ts, src/utils/image-utils.ts */
-import {App, Notice} from "obsidian";
+import {App, Notice, normalizePath, TFile} from "obsidian";
 import type {MyPluginSettings} from "../settings";
 import {
 	buildImageItemsFromRelativePaths,
@@ -10,6 +10,7 @@ import {
 	getRemoteIndexItems,
 	getVaultImageItems,
 	ImageItem,
+	resolveVaultFolderPath,
 } from "../utils/image-utils";
 
 export interface BackgroundPickerHost {
@@ -211,6 +212,10 @@ export class BackgroundPickerOverlay {
 		if (this.overlayEl) {
 			return;
 		}
+		if (this.shouldPreferRemoteSource()) {
+			// Avoid warming a vault cache when the picker should use remote data.
+			return;
+		}
 		const folderPath = this.host.settings.imageFolderPath.trim();
 		if (!folderPath) {
 			return;
@@ -269,13 +274,17 @@ export class BackgroundPickerOverlay {
 				const allowedPaths = linkedInfo.whitelistFiles
 					.map((value) => this.normalizeRelativePath(value))
 					.filter((value) => this.isImagePath(value));
-				if (allowedPaths.length === 0) {
+				const filteredPaths = this.filterExistingVaultRelativePaths(
+					folderPath,
+					allowedPaths
+				);
+				if (filteredPaths.length === 0) {
 					return {items: [], errorMessage: "No whitelisted images found."};
 				}
 				return buildImageItemsFromRelativePaths(
 					this.app,
 					folderPath,
-					allowedPaths,
+					filteredPaths,
 					linkedInfo.baseUrl,
 					true
 				);
@@ -285,27 +294,18 @@ export class BackgroundPickerOverlay {
 				authToken: linkedInfo.authToken,
 				recursive: true,
 			});
-			if (!indexResult.errorMessage) {
-				const relativePaths = indexResult.items.map((item) => item.relativePath);
-				return buildImageItemsFromRelativePaths(
-					this.app,
-					folderPath,
-					relativePaths,
-					linkedInfo.baseUrl,
-					true
-				);
+			if (indexResult.errorMessage) {
+				return {items: [], errorMessage: indexResult.errorMessage};
 			}
-
-			const fallback = await getRemoteImageItems(linkedInfo.baseUrl, linkedInfo.authToken);
-			if (fallback.errorMessage) {
-				return fallback;
+			const relativePaths = indexResult.items.map((item) => item.relativePath);
+			const filteredPaths = this.filterExistingVaultRelativePaths(folderPath, relativePaths);
+			if (filteredPaths.length === 0) {
+				return {items: [], errorMessage: "No images found."};
 			}
-
-			const fallbackPaths = fallback.items.map((item) => item.relativePath);
 			return buildImageItemsFromRelativePaths(
 				this.app,
 				folderPath,
-				fallbackPaths,
+				filteredPaths,
 				linkedInfo.baseUrl,
 				true
 			);
@@ -473,17 +473,23 @@ export class BackgroundPickerOverlay {
 		this.resetImageObserver();
 		this.gridEl.innerHTML = "";
 		// Keep selection state so tiles can mark themselves during batch rendering.
-		this.selectedPath = this.host.settings.selectedImagePath;
+		this.selectedPath = this.normalizeRelativePath(this.host.settings.selectedImagePath);
 		this.selectedTile = null;
 		this.renderQueue = null;
 		this.itemCount = 0;
 		this.statusEl.textContent = "Loading images...";
 
+		const preferRemote = this.shouldPreferRemoteSource();
 		// Cache by settings so reopening the picker avoids a full scan.
 		const cacheKey = this.getCacheKey();
 		let result;
-		if (!forceRefresh && cacheKey === this.cachedKey) {
-			result = {items: this.cachedItems, errorMessage: this.cachedError};
+		if (!forceRefresh && !preferRemote && cacheKey === this.cachedKey) {
+			// Vault cache can go stale if files are deleted or moved.
+			if (this.isVaultCacheValid(this.cachedItems)) {
+				result = {items: this.cachedItems, errorMessage: this.cachedError};
+			} else {
+				result = await this.loadImageItems();
+			}
 		} else {
 			result = await this.loadImageItems();
 		}
@@ -552,6 +558,37 @@ export class BackgroundPickerOverlay {
 		tile.appendChild(name);
 
 		return tile;
+	}
+
+	private filterExistingVaultRelativePaths(folderPath: string, relativePaths: string[]): string[] {
+		const resolvedFolder = resolveVaultFolderPath(this.app, folderPath);
+		if (resolvedFolder.errorMessage) {
+			return relativePaths;
+		}
+		const normalizedFolder = normalizePath(resolvedFolder.folderPath);
+		const existing: string[] = [];
+		for (const pathValue of relativePaths) {
+			const normalizedRelative = this.normalizeRelativePath(pathValue);
+			const fullPath = normalizePath(`${normalizedFolder}/${normalizedRelative}`);
+			const file = this.app.vault.getAbstractFileByPath(fullPath);
+			if (file instanceof TFile) {
+				existing.push(normalizedRelative);
+			}
+		}
+		return existing;
+	}
+
+	private isVaultCacheValid(items: ImageItem[]): boolean {
+		for (const item of items) {
+			if (!item.file) {
+				return false;
+			}
+			const current = this.app.vault.getAbstractFileByPath(item.file.path);
+			if (!(current instanceof TFile)) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	private handleImageError(tile: HTMLButtonElement, img: HTMLImageElement): void {
