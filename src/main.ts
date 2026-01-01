@@ -10,10 +10,14 @@ import {buildUrlFromRelative} from "./utils/image-utils";
 export default class DivergencesPlusPlugin extends Plugin {
 	settings: MyPluginSettings;
 	private backgroundPicker: BackgroundPickerOverlay | null = null;
+	private cacheWarmupHandle: number | null = null;
+	private cacheWarmupIsIdle = false;
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
 		this.applySelectedBackground();
+		this.ensureBackgroundPicker();
+		this.scheduleCacheWarmup();
 
 		this.addCommand({
 			id: "open-background-picker",
@@ -25,13 +29,12 @@ export default class DivergencesPlusPlugin extends Plugin {
 	}
 
 	openBackgroundPicker(): void {
-		if (!this.backgroundPicker) {
-			this.backgroundPicker = new BackgroundPickerOverlay(this.app, this);
-		}
-		this.backgroundPicker.open();
+		const picker = this.ensureBackgroundPicker();
+		picker.open();
 	}
 
 	onunload(): void {
+		this.clearCacheWarmup();
 		this.backgroundPicker?.close();
 		this.backgroundPicker = null;
 	}
@@ -112,5 +115,50 @@ export default class DivergencesPlusPlugin extends Plugin {
 
 	async saveSettings(): Promise<void> {
 		await this.saveData(this.settings);
+	}
+
+	private ensureBackgroundPicker(): BackgroundPickerOverlay {
+		if (!this.backgroundPicker) {
+			this.backgroundPicker = new BackgroundPickerOverlay(this.app, this);
+		}
+		return this.backgroundPicker;
+	}
+
+	private scheduleCacheWarmup(): void {
+		if (!this.backgroundPicker || this.cacheWarmupHandle !== null) {
+			return;
+		}
+		const runWarmup = (): void => {
+			this.backgroundPicker?.primeCache();
+			this.cacheWarmupHandle = null;
+			this.cacheWarmupIsIdle = false;
+		};
+		const requestIdle = (
+			window as Window & {
+				requestIdleCallback?: (callback: () => void, options?: {timeout: number}) => number;
+			}
+		).requestIdleCallback;
+		// Warm the cache after startup without blocking the first render.
+		if (requestIdle) {
+			this.cacheWarmupIsIdle = true;
+			this.cacheWarmupHandle = requestIdle(runWarmup, {timeout: 1200});
+			return;
+		}
+		this.cacheWarmupHandle = window.setTimeout(runWarmup, 1200);
+	}
+
+	private clearCacheWarmup(): void {
+		if (this.cacheWarmupHandle === null) {
+			return;
+		}
+		if (this.cacheWarmupIsIdle) {
+			const cancelIdle = (window as Window & {cancelIdleCallback?: (id: number) => void})
+				.cancelIdleCallback;
+			cancelIdle?.(this.cacheWarmupHandle);
+		} else {
+			window.clearTimeout(this.cacheWarmupHandle);
+		}
+		this.cacheWarmupHandle = null;
+		this.cacheWarmupIsIdle = false;
 	}
 }

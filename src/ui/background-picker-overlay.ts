@@ -194,6 +194,22 @@ export class BackgroundPickerOverlay {
 		this.selectedTile = null;
 	}
 
+	primeCache(): void {
+		if (this.overlayEl) {
+			return;
+		}
+		const folderPath = this.host.settings.imageFolderPath.trim();
+		if (!folderPath) {
+			return;
+		}
+		// Precompute the cache so the modal opens quickly.
+		const cacheKey = this.getCacheKey();
+		const result = getVaultImageItems(this.app, "", folderPath);
+		this.cachedKey = cacheKey;
+		this.cachedItems = result.items;
+		this.cachedError = result.errorMessage;
+	}
+
 	private focusDialog(): void {
 		if (!this.dialogEl) {
 			return;
