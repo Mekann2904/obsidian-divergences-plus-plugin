@@ -29,7 +29,8 @@ Vault 内の画像か、ローカル HTTP サーバーの画像を使えます�
 ## Local Vault Server 連携
 - Local Vault Server を有効化。  
 - **Linked server entry** でエントリを選択。  
-- Base URL / フォルダ / トークンが自動同期されます。
+- Base URL / フォルダ / トークンが自動同期されます。  
+- リンク中は Local Vault Server の whitelist / index を唯一の情報源にします。  
 
 ## JSON インデックス
 - **Use HTTP directory listing** が ON の場合、`__index.json` を優先します。  
