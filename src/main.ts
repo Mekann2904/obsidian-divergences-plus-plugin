@@ -179,6 +179,30 @@ export default class DivergencesPlusPlugin extends Plugin {
 		};
 	}
 
+	getLinkedServerInfo(): {
+		baseUrl: string;
+		authToken: string;
+		whitelistEnabled: boolean;
+		whitelistFiles: string[];
+	} | null {
+		const api = this.getLocalVaultServerApi();
+		if (!api) {
+			return null;
+		}
+		const entry =
+			findLocalVaultServerEntry(api.getServerEntries(), this.settings.linkedServerEntryId) ??
+			this.findMatchingServerEntry(api);
+		if (!entry) {
+			return null;
+		}
+		return {
+			baseUrl: buildLocalVaultServerBaseUrl(entry),
+			authToken: entry.authToken ?? "",
+			whitelistEnabled: Boolean(entry.enableWhitelist),
+			whitelistFiles: [...entry.whitelistFiles],
+		};
+	}
+
 	private findMatchingServerEntry(api: LocalVaultServerApi): ReturnType<
 		typeof findLocalVaultServerEntry
 	> {

@@ -17,6 +17,12 @@ export interface BackgroundPickerHost {
 	setBackgroundByRelativePath(relativePath: string): Promise<void>;
 	clearBackgroundSelection(): Promise<void>;
 	getLinkedWhitelistInfo?: () => {enabled: boolean; files: string[]};
+	getLinkedServerInfo?: () => {
+		baseUrl: string;
+		authToken: string;
+		whitelistEnabled: boolean;
+		whitelistFiles: string[];
+	} | null;
 }
 
 export class BackgroundPickerOverlay {
@@ -246,29 +252,64 @@ export class BackgroundPickerOverlay {
 
 	private async loadImageItems(): Promise<{items: ImageItem[]; errorMessage: string}> {
 		const folderPath = this.host.settings.imageFolderPath;
-		const baseUrl = this.host.settings.serverBaseUrl.trim();
-		const authToken = this.host.settings.authToken?.trim() ?? "";
-		const isLinked = Boolean(this.host.settings.linkedServerEntryId?.trim());
+		const linkedInfo = this.host.getLinkedServerInfo?.();
+		const baseUrl = linkedInfo?.baseUrl?.trim() ?? this.host.settings.serverBaseUrl.trim();
+		const authToken = linkedInfo?.authToken?.trim() ?? this.host.settings.authToken?.trim() ?? "";
+		const isLinked = Boolean(this.host.settings.linkedServerEntryId?.trim()) || Boolean(linkedInfo);
 		const whitelistInfo = this.host.getLinkedWhitelistInfo?.();
-		if (whitelistInfo?.enabled) {
-			const allowedPaths = whitelistInfo.files
-				.map((value) => this.normalizeRelativePath(value))
-				.filter((value) => this.isImagePath(value));
-			if (allowedPaths.length === 0) {
-				return {items: [], errorMessage: "No whitelisted images found."};
+
+		// Linked or protected sources must reflect server availability only.
+		const whitelistEnabled =
+			Boolean(whitelistInfo?.enabled) || Boolean(linkedInfo?.whitelistEnabled);
+		const shouldPreferRemote = this.shouldPreferRemoteSource();
+
+		if (linkedInfo) {
+			// Always use the server plugin as the source of truth when linked.
+			if (linkedInfo.whitelistEnabled) {
+				const allowedPaths = linkedInfo.whitelistFiles
+					.map((value) => this.normalizeRelativePath(value))
+					.filter((value) => this.isImagePath(value));
+				if (allowedPaths.length === 0) {
+					return {items: [], errorMessage: "No whitelisted images found."};
+				}
+				return buildImageItemsFromRelativePaths(
+					this.app,
+					folderPath,
+					allowedPaths,
+					linkedInfo.baseUrl,
+					true
+				);
 			}
+
+			const indexResult = await getRemoteIndexItems(linkedInfo.baseUrl, {
+				authToken: linkedInfo.authToken,
+				recursive: true,
+			});
+			if (!indexResult.errorMessage) {
+				const relativePaths = indexResult.items.map((item) => item.relativePath);
+				return buildImageItemsFromRelativePaths(
+					this.app,
+					folderPath,
+					relativePaths,
+					linkedInfo.baseUrl,
+					true
+				);
+			}
+
+			const fallback = await getRemoteImageItems(linkedInfo.baseUrl, linkedInfo.authToken);
+			if (fallback.errorMessage) {
+				return fallback;
+			}
+
+			const fallbackPaths = fallback.items.map((item) => item.relativePath);
 			return buildImageItemsFromRelativePaths(
 				this.app,
 				folderPath,
-				allowedPaths,
-				baseUrl,
+				fallbackPaths,
+				linkedInfo.baseUrl,
 				true
 			);
 		}
-
-		// Linked or protected sources must reflect server availability only.
-		const shouldPreferRemote =
-			Boolean(baseUrl) && (this.host.settings.useRemoteIndex || authToken.length > 0 || isLinked);
 
 		if (shouldPreferRemote) {
 			const indexResult = await getRemoteIndexItems(baseUrl, {
@@ -298,6 +339,21 @@ export class BackgroundPickerOverlay {
 				fallbackPaths,
 				baseUrl,
 				true
+			);
+		}
+		if (whitelistEnabled) {
+			const allowedPaths = whitelistInfo?.files
+				.map((value) => this.normalizeRelativePath(value))
+				.filter((value) => this.isImagePath(value)) ?? [];
+			if (allowedPaths.length === 0) {
+				return {items: [], errorMessage: "No whitelisted images found."};
+			}
+			return buildImageItemsFromRelativePaths(
+				this.app,
+				folderPath,
+				allowedPaths,
+				baseUrl,
+				Boolean(baseUrl)
 			);
 		}
 
@@ -368,6 +424,25 @@ export class BackgroundPickerOverlay {
 
 	private normalizeRelativePath(value: string): string {
 		return value.trim().replace(/^\/+/, "").replace(/\\/g, "/");
+	}
+
+	private shouldPreferRemoteSource(): boolean {
+		if (this.host.getLinkedServerInfo?.()) {
+			return true;
+		}
+		const baseUrl = this.host.settings.serverBaseUrl.trim();
+		if (!baseUrl) {
+			return false;
+		}
+		const authToken = this.host.settings.authToken?.trim() ?? "";
+		const isLinked = Boolean(this.host.settings.linkedServerEntryId?.trim());
+		const whitelistEnabled = Boolean(this.host.getLinkedWhitelistInfo?.()?.enabled);
+		return (
+			this.host.settings.useRemoteIndex ||
+			authToken.length > 0 ||
+			isLinked ||
+			whitelistEnabled
+		);
 	}
 
 	private isImagePath(pathValue: string): boolean {
@@ -576,14 +651,11 @@ export class BackgroundPickerOverlay {
 	}
 
 	private getCacheKey(): string {
-		const mode = this.host.settings.useRemoteIndex ? "remote" : "vault";
+		const preferRemote = this.shouldPreferRemoteSource();
+		const mode = preferRemote ? "remote" : "vault";
 		// Base URL only affects remote mode; vault thumbnails ignore it.
-		const baseUrl = this.host.settings.useRemoteIndex
-			? this.host.settings.serverBaseUrl.trim()
-			: "";
-		const authToken = this.host.settings.useRemoteIndex
-			? this.host.settings.authToken?.trim() ?? ""
-			: "";
+		const baseUrl = preferRemote ? this.host.settings.serverBaseUrl.trim() : "";
+		const authToken = preferRemote ? this.host.settings.authToken?.trim() ?? "" : "";
 		const folder = this.host.settings.imageFolderPath.trim();
 		const whitelistKey = this.getWhitelistCacheKey();
 		return `${mode}|${baseUrl}|${folder}|${authToken}|${whitelistKey}`;
