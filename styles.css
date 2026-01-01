@@ -1,0 +1,120 @@
+/* styles.css
+ * Plugin styles for the background picker overlay.
+ * Why: keep the picker clean, readable, and minimal.
+ * Related: src/ui/background-picker-overlay.ts, src/main.ts, src/settings.ts */
+
+.anp-bg-picker-overlay {
+	position: fixed;
+	inset: 0;
+	background: var(--background-modifier-cover, rgba(0, 0, 0, 0.6));
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 16px;
+	z-index: 1000;
+}
+
+.anp-bg-picker-dialog {
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 16px;
+	padding: 16px;
+	width: min(960px, 92vw);
+	max-height: 82vh;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+	overflow: hidden;
+}
+
+.anp-bg-picker-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.anp-bg-picker-header h2 {
+	margin: 0;
+	font-size: var(--font-ui-large);
+}
+
+.anp-bg-picker-close {
+	border: 1px solid var(--background-modifier-border);
+	background: var(--background-secondary);
+	border-radius: 10px;
+	padding: 6px 10px;
+	cursor: pointer;
+}
+
+.anp-bg-picker-info {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	margin-bottom: 12px;
+}
+
+.anp-bg-picker-controls {
+	display: flex;
+	gap: 8px;
+	margin-bottom: 12px;
+}
+
+.anp-bg-picker-status {
+	color: var(--text-muted);
+	margin-bottom: 12px;
+}
+
+.anp-bg-picker-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+	gap: 12px;
+	flex: 1;
+	overflow: auto;
+	padding-right: 4px;
+}
+
+.anp-bg-picker-tile {
+	background: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 12px;
+	padding: 0;
+	overflow: hidden;
+	text-align: left;
+	cursor: pointer;
+	transition: transform 120ms ease, border-color 120ms ease;
+}
+
+.anp-bg-picker-tile:hover {
+	transform: translateY(-2px);
+	border-color: var(--interactive-accent);
+}
+
+.anp-bg-picker-tile.is-selected {
+	border-color: var(--interactive-accent);
+	box-shadow: 0 0 0 2px var(--interactive-accent);
+}
+
+.anp-bg-picker-thumb {
+	display: block;
+	width: 100%;
+	aspect-ratio: 4 / 3;
+	object-fit: cover;
+	background: var(--background-primary);
+}
+
+.anp-bg-picker-name {
+	padding: 6px 8px 8px;
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+@media (max-width: 700px) {
+	.anp-bg-picker-dialog {
+		width: 100%;
+		max-height: 90vh;
+	}
+}
