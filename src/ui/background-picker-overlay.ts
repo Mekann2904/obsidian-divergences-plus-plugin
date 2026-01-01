@@ -16,6 +16,7 @@ export interface BackgroundPickerHost {
 	settings: MyPluginSettings;
 	setBackgroundByRelativePath(relativePath: string): Promise<void>;
 	clearBackgroundSelection(): Promise<void>;
+	getLinkedWhitelistInfo?: () => {enabled: boolean; files: string[]};
 }
 
 export class BackgroundPickerOverlay {
@@ -245,16 +246,70 @@ export class BackgroundPickerOverlay {
 
 	private async loadImageItems(): Promise<{items: ImageItem[]; errorMessage: string}> {
 		const folderPath = this.host.settings.imageFolderPath;
-		if (!this.host.settings.useRemoteIndex) {
-			return getVaultImageItems(this.app, "", folderPath);
+		const baseUrl = this.host.settings.serverBaseUrl.trim();
+		const authToken = this.host.settings.authToken?.trim() ?? "";
+		const isLinked = Boolean(this.host.settings.linkedServerEntryId?.trim());
+		const whitelistInfo = this.host.getLinkedWhitelistInfo?.();
+		if (whitelistInfo?.enabled) {
+			const allowedPaths = whitelistInfo.files
+				.map((value) => this.normalizeRelativePath(value))
+				.filter((value) => this.isImagePath(value));
+			if (allowedPaths.length === 0) {
+				return {items: [], errorMessage: "No whitelisted images found."};
+			}
+			return buildImageItemsFromRelativePaths(
+				this.app,
+				folderPath,
+				allowedPaths,
+				baseUrl,
+				true
+			);
 		}
 
-		const baseUrl = this.host.settings.serverBaseUrl.trim();
+		// Linked or protected sources must reflect server availability only.
+		const shouldPreferRemote =
+			Boolean(baseUrl) && (this.host.settings.useRemoteIndex || authToken.length > 0 || isLinked);
+
+		if (shouldPreferRemote) {
+			const indexResult = await getRemoteIndexItems(baseUrl, {
+				authToken,
+				recursive: true,
+			});
+			if (!indexResult.errorMessage) {
+				const relativePaths = indexResult.items.map((item) => item.relativePath);
+				return buildImageItemsFromRelativePaths(
+					this.app,
+					folderPath,
+					relativePaths,
+					baseUrl,
+					true
+				);
+			}
+
+			const fallback = await getRemoteImageItems(baseUrl, authToken);
+			if (fallback.errorMessage) {
+				return fallback;
+			}
+
+			const fallbackPaths = fallback.items.map((item) => item.relativePath);
+			return buildImageItemsFromRelativePaths(
+				this.app,
+				folderPath,
+				fallbackPaths,
+				baseUrl,
+				true
+			);
+		}
+
+		if (!this.host.settings.useRemoteIndex) {
+			const localResult = getVaultImageItems(this.app, "", folderPath);
+			return this.applyWhitelistFilter(localResult);
+		}
+
 		if (!baseUrl) {
 			return {items: [], errorMessage: "Base URL is empty."};
 		}
 
-		const authToken = this.host.settings.authToken?.trim() ?? "";
 		// Prefer the JSON index for speed, then fall back to HTML listings.
 		const indexResult = await getRemoteIndexItems(baseUrl, {
 			authToken,
@@ -262,16 +317,76 @@ export class BackgroundPickerOverlay {
 		});
 		if (!indexResult.errorMessage) {
 			const relativePaths = indexResult.items.map((item) => item.relativePath);
-			return buildImageItemsFromRelativePaths(this.app, folderPath, relativePaths, baseUrl);
+			const remoteResult = buildImageItemsFromRelativePaths(
+				this.app,
+				folderPath,
+				relativePaths,
+				baseUrl,
+				true
+			);
+			return this.applyWhitelistFilter(remoteResult);
 		}
 
 		const fallback = await getRemoteImageItems(baseUrl, authToken);
 		if (fallback.errorMessage) {
-			return fallback;
+			return this.applyWhitelistFilter(fallback);
 		}
 
 		const fallbackPaths = fallback.items.map((item) => item.relativePath);
-		return buildImageItemsFromRelativePaths(this.app, folderPath, fallbackPaths, baseUrl);
+		const fallbackResult = buildImageItemsFromRelativePaths(
+			this.app,
+			folderPath,
+			fallbackPaths,
+			baseUrl,
+			true
+		);
+		return this.applyWhitelistFilter(fallbackResult);
+	}
+
+	private applyWhitelistFilter(result: {
+		items: ImageItem[];
+		errorMessage: string;
+	}): {items: ImageItem[]; errorMessage: string} {
+		if (result.items.length === 0) {
+			return result;
+		}
+		const whitelistInfo = this.host.getLinkedWhitelistInfo?.();
+		if (!whitelistInfo?.enabled) {
+			return result;
+		}
+		if (whitelistInfo.files.length === 0) {
+			return {items: [], errorMessage: result.errorMessage};
+		}
+		const allowed = new Set(
+			whitelistInfo.files.map((value) => this.normalizeRelativePath(value))
+		);
+		const filtered = result.items.filter((item) =>
+			allowed.has(this.normalizeRelativePath(item.relativePath))
+		);
+		return {items: filtered, errorMessage: result.errorMessage};
+	}
+
+	private normalizeRelativePath(value: string): string {
+		return value.trim().replace(/^\/+/, "").replace(/\\/g, "/");
+	}
+
+	private isImagePath(pathValue: string): boolean {
+		const ext = pathValue.split(".").pop()?.toLowerCase();
+		if (!ext) {
+			return false;
+		}
+		return new Set([
+			"png",
+			"jpg",
+			"jpeg",
+			"webp",
+			"gif",
+			"bmp",
+			"svg",
+			"avif",
+			"tif",
+			"tiff",
+		]).has(ext);
 	}
 
 	private async renderGrid(forceRefresh = false): Promise<void> {
@@ -348,6 +463,10 @@ export class BackgroundPickerOverlay {
 			}
 		}
 		img.alt = item.displayName;
+		// Remove tiles that fail to load to avoid showing inaccessible files.
+		img.addEventListener("error", () => {
+			this.handleImageError(tile, img);
+		});
 		this.prepareLazyImage(img, item.url);
 
 		const name = document.createElement("div");
@@ -358,6 +477,19 @@ export class BackgroundPickerOverlay {
 		tile.appendChild(name);
 
 		return tile;
+	}
+
+	private handleImageError(tile: HTMLButtonElement, img: HTMLImageElement): void {
+		if (!this.gridEl || !tile.isConnected) {
+			return;
+		}
+		this.imageObserver?.unobserve(img);
+		tile.remove();
+		this.itemCount = Math.max(this.itemCount - 1, 0);
+		this.requestGridUpdate();
+		if (this.statusEl && this.itemCount === 0) {
+			this.statusEl.textContent = "No images found.";
+		}
 	}
 
 	private setSelection(relativePath: string, tile: HTMLButtonElement | null): void {
@@ -453,7 +585,17 @@ export class BackgroundPickerOverlay {
 			? this.host.settings.authToken?.trim() ?? ""
 			: "";
 		const folder = this.host.settings.imageFolderPath.trim();
-		return `${mode}|${baseUrl}|${folder}|${authToken}`;
+		const whitelistKey = this.getWhitelistCacheKey();
+		return `${mode}|${baseUrl}|${folder}|${authToken}|${whitelistKey}`;
+	}
+
+	private getWhitelistCacheKey(): string {
+		const whitelistInfo = this.host.getLinkedWhitelistInfo?.();
+		if (!whitelistInfo?.enabled || whitelistInfo.files.length === 0) {
+			return "whitelist:none";
+		}
+		const normalized = whitelistInfo.files.map((value) => this.normalizeRelativePath(value));
+		return `whitelist:${normalized.join("|")}`;
 	}
 
 	private ensureResizeObserver(): void {

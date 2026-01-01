@@ -64,14 +64,20 @@ export default class DivergencesPlusPlugin extends Plugin {
 		if (!relativePath) {
 			return "";
 		}
+		// When linked or protected, prefer the server URL to avoid showing local-only files.
+		const preferRemote =
+			Boolean(baseUrl) &&
+			(this.settings.useRemoteIndex ||
+				this.settings.authToken.trim().length > 0 ||
+				this.settings.linkedServerEntryId.trim().length > 0);
+		if (preferRemote && baseUrl) {
+			return buildUrlFromRelative(baseUrl, relativePath);
+		}
 		const localUrl = this.getLocalImageUrl(relativePath);
 		if (localUrl) {
 			return localUrl;
 		}
-		if (baseUrl) {
-			return buildUrlFromRelative(baseUrl, relativePath);
-		}
-		return "";
+		return baseUrl ? buildUrlFromRelative(baseUrl, relativePath) : "";
 	}
 
 	getCssVariableName(): string {
@@ -139,6 +145,74 @@ export default class DivergencesPlusPlugin extends Plugin {
 
 	isLinkedToLocalServer(): boolean {
 		return Boolean(this.settings.linkedServerEntryId && this.getLocalVaultServerApi());
+	}
+
+	getLinkedWhitelistInfo(): {enabled: boolean; files: string[]} {
+		const api = this.getLocalVaultServerApi();
+		if (!api || !this.settings.linkedServerEntryId) {
+			const fallbackEntry = api ? this.findMatchingServerEntry(api) : null;
+			if (!fallbackEntry) {
+				return {enabled: false, files: []};
+			}
+			return {
+				enabled: Boolean(fallbackEntry.enableWhitelist),
+				files: [...fallbackEntry.whitelistFiles],
+			};
+		}
+		const entry = findLocalVaultServerEntry(
+			api.getServerEntries(),
+			this.settings.linkedServerEntryId
+		);
+		if (!entry) {
+			const fallbackEntry = this.findMatchingServerEntry(api);
+			if (!fallbackEntry) {
+				return {enabled: false, files: []};
+			}
+			return {
+				enabled: Boolean(fallbackEntry.enableWhitelist),
+				files: [...fallbackEntry.whitelistFiles],
+			};
+		}
+		return {
+			enabled: Boolean(entry.enableWhitelist),
+			files: [...entry.whitelistFiles],
+		};
+	}
+
+	private findMatchingServerEntry(api: LocalVaultServerApi): ReturnType<
+		typeof findLocalVaultServerEntry
+	> {
+		const entries = api.getServerEntries();
+		if (entries.length === 1) {
+			return entries[0] ?? null;
+		}
+
+		const baseUrl = this.settings.serverBaseUrl.trim();
+		if (baseUrl) {
+			const matches = entries.filter(
+				(entry) => buildLocalVaultServerBaseUrl(entry) === baseUrl
+			);
+			if (matches.length === 1) {
+				return matches[0] ?? null;
+			}
+		}
+
+		const folderPath = this.normalizeForCompare(this.settings.imageFolderPath);
+		if (folderPath) {
+			const matches = entries.filter((entry) => {
+				const entryPath = this.normalizeForCompare(entry.serveDir);
+				return entryPath === folderPath;
+			});
+			if (matches.length === 1) {
+				return matches[0] ?? null;
+			}
+		}
+
+		return null;
+	}
+
+	private normalizeForCompare(value: string): string {
+		return value.trim().replace(/\\/g, "/").replace(/\/+$/, "");
 	}
 
 	async syncFromLinkedServer(): Promise<void> {

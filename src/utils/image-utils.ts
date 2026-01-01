@@ -199,7 +199,8 @@ export function buildImageItemsFromRelativePaths(
 	app: App,
 	folderPath: string,
 	relativePaths: string[],
-	baseUrl = ""
+	baseUrl = "",
+	preferRemote = false
 ): ImageItemsResult {
 	const trimmedBaseUrl = baseUrl.trim();
 	const rawFolderPath = folderPath.trim();
@@ -216,7 +217,10 @@ export function buildImageItemsFromRelativePaths(
 			const normalizedRelative = relativePath.trim().replace(/^\/+/, "");
 			let file: TFile | null = null;
 			let url = "";
-			if (useVault && normalizedFolder) {
+			if (preferRemote && trimmedBaseUrl) {
+				url = buildUrlFromRelative(trimmedBaseUrl, normalizedRelative);
+			}
+			if (!url && useVault && normalizedFolder) {
 				const fullPath = normalizePath(`${normalizedFolder}/${normalizedRelative}`);
 				const vaultFile = app.vault.getAbstractFileByPath(fullPath);
 				if (vaultFile instanceof TFile) {
