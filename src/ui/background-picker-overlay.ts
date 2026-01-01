@@ -290,6 +290,15 @@ export class BackgroundPickerOverlay {
 				);
 			}
 
+			const localResult = getVaultImageItems(this.app, linkedInfo.baseUrl, folderPath);
+			if (!localResult.errorMessage) {
+				return localResult;
+			}
+			// Fall back to the server index when the folder is outside the vault.
+			if (!this.isVaultOnlyError(localResult.errorMessage)) {
+				return localResult;
+			}
+
 			const indexResult = await getRemoteIndexItems(linkedInfo.baseUrl, {
 				authToken: linkedInfo.authToken,
 				recursive: true,
@@ -589,6 +598,14 @@ export class BackgroundPickerOverlay {
 			}
 		}
 		return true;
+	}
+
+	private isVaultOnlyError(errorMessage: string): boolean {
+		const message = errorMessage.toLowerCase();
+		return (
+			message.includes("inside the vault") ||
+			message.includes("desktop vault")
+		);
 	}
 
 	private handleImageError(tile: HTMLButtonElement, img: HTMLImageElement): void {
