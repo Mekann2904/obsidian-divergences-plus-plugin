@@ -16,6 +16,18 @@ export interface ImageItemsResult {
 	errorMessage: string;
 }
 
+export interface RemoteIndexItem {
+	relativePath: string;
+	name: string;
+	size: number;
+	mtime: number;
+}
+
+export interface RemoteIndexResult {
+	items: RemoteIndexItem[];
+	errorMessage: string;
+}
+
 const IMAGE_EXTENSIONS = new Set([
 	"png",
 	"jpg",
@@ -24,6 +36,9 @@ const IMAGE_EXTENSIONS = new Set([
 	"gif",
 	"bmp",
 	"svg",
+	"avif",
+	"tif",
+	"tiff",
 ]);
 
 export function getVaultImageItems(
@@ -75,14 +90,18 @@ export function getVaultImageItems(
 	return {items, errorMessage: ""};
 }
 
-export async function getRemoteImageItems(baseUrl: string): Promise<ImageItemsResult> {
+export async function getRemoteImageItems(
+	baseUrl: string,
+	authToken = ""
+): Promise<ImageItemsResult> {
 	const trimmedBaseUrl = baseUrl.trim();
 	if (!trimmedBaseUrl) {
 		return {items: [], errorMessage: "Base URL is empty."};
 	}
 
 	try {
-		const response = await requestUrl({url: trimmedBaseUrl, method: "GET"});
+		const headers = authToken ? {Authorization: `Bearer ${authToken}`} : undefined;
+		const response = await requestUrl({url: trimmedBaseUrl, method: "GET", headers});
 		if (response.status < 200 || response.status >= 300) {
 			return {
 				items: [],
@@ -130,6 +149,100 @@ export async function getRemoteImageItems(baseUrl: string): Promise<ImageItemsRe
 	}
 }
 
+export async function getRemoteIndexItems(
+	baseUrl: string,
+	options: {authToken?: string; path?: string; recursive?: boolean; extensions?: string[]} = {}
+): Promise<RemoteIndexResult> {
+	const trimmedBaseUrl = baseUrl.trim();
+	if (!trimmedBaseUrl) {
+		return {items: [], errorMessage: "Base URL is empty."};
+	}
+
+	const query = new URLSearchParams();
+	// JSON index is a fast path provided by Local Vault Server.
+	const extensions =
+		options.extensions && options.extensions.length > 0
+			? options.extensions
+			: Array.from(IMAGE_EXTENSIONS);
+	query.set("ext", extensions.join(","));
+	if (options.path) {
+		query.set("path", options.path);
+	}
+	if (options.recursive === false) {
+		query.set("recursive", "0");
+	}
+
+	const url = `${trimmedBaseUrl.replace(/\/+$/, "")}/__index.json?${query.toString()}`;
+	const headers = options.authToken ? {Authorization: `Bearer ${options.authToken}`} : undefined;
+
+	try {
+		const response = await requestUrl({url, method: "GET", headers});
+		if (response.status < 200 || response.status >= 300) {
+			return {
+				items: [],
+				errorMessage: `HTTP error: ${response.status}`,
+			};
+		}
+
+		const data = JSON.parse(response.text) as {items?: RemoteIndexItem[]};
+		const items = Array.isArray(data?.items) ? data.items : [];
+		return {items, errorMessage: ""};
+	} catch {
+		return {
+			items: [],
+			errorMessage: "Failed to fetch the JSON index.",
+		};
+	}
+}
+
+export function buildImageItemsFromRelativePaths(
+	app: App,
+	folderPath: string,
+	relativePaths: string[],
+	baseUrl = ""
+): ImageItemsResult {
+	const trimmedBaseUrl = baseUrl.trim();
+	const rawFolderPath = folderPath.trim();
+	const resolvedFolder = resolveVaultFolderPath(app, rawFolderPath);
+	const useVault = !resolvedFolder.errorMessage;
+
+	if (!useVault && !trimmedBaseUrl) {
+		return {items: [], errorMessage: resolvedFolder.errorMessage};
+	}
+
+	const normalizedFolder = useVault ? normalizePath(resolvedFolder.folderPath) : "";
+	const items = relativePaths
+		.map((relativePath) => {
+			const normalizedRelative = relativePath.trim().replace(/^\/+/, "");
+			let file: TFile | null = null;
+			let url = "";
+			if (useVault && normalizedFolder) {
+				const fullPath = normalizePath(`${normalizedFolder}/${normalizedRelative}`);
+				const vaultFile = app.vault.getAbstractFileByPath(fullPath);
+				if (vaultFile instanceof TFile) {
+					file = vaultFile;
+					url = app.vault.getResourcePath(vaultFile);
+				}
+			}
+			if (!url && trimmedBaseUrl) {
+				url = buildUrlFromRelative(trimmedBaseUrl, normalizedRelative);
+			}
+			if (!url) {
+				return null;
+			}
+			return {
+				file,
+				relativePath: normalizedRelative,
+				url,
+				displayName: file?.basename ?? getFilenameFromPath(normalizedRelative),
+			};
+		})
+		.filter((item): item is ImageItem => Boolean(item))
+		.sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+	return {items, errorMessage: ""};
+}
+
 export function buildUrlFromRelative(baseUrl: string, relativePath: string): string {
 	const trimmedBaseUrl = baseUrl.trim().replace(/\/+$/, "");
 	const trimmedRelativePath = relativePath.trim().replace(/^\/+/, "");
@@ -139,7 +252,7 @@ export function buildUrlFromRelative(baseUrl: string, relativePath: string): str
 	return `${trimmedBaseUrl}/${encodePath(trimmedRelativePath)}`;
 }
 
-function resolveVaultFolderPath(
+export function resolveVaultFolderPath(
 	app: App,
 	folderPath: string
 ): {folderPath: string; errorMessage: string} {
@@ -280,6 +393,11 @@ function getFilenameFromUrl(url: string): string {
 	} catch {
 		return "";
 	}
+}
+
+function getFilenameFromPath(pathValue: string): string {
+	const segments = pathValue.split("/").filter(Boolean);
+	return segments.length > 0 ? segments[segments.length - 1] ?? "" : pathValue;
 }
 
 function getRelativePathFromUrl(baseUrl: string, url: string): string {

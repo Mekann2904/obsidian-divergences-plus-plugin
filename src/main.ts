@@ -3,18 +3,26 @@
  * Why: connects Obsidian lifecycle, settings, and UI actions.
  * Related: src/settings.ts, src/ui/background-picker-overlay.ts, src/utils/image-utils.ts */
 import {normalizePath, Plugin, TFile} from "obsidian";
+import {
+	buildLocalVaultServerBaseUrl,
+	findLocalVaultServerEntry,
+	getLocalVaultServerApi,
+	LocalVaultServerApi,
+} from "./integrations/local-vault-server";
 import {DEFAULT_SETTINGS, MyPluginSettings, MyPluginSettingTab} from "./settings";
 import {BackgroundPickerOverlay} from "./ui/background-picker-overlay";
-import {buildUrlFromRelative} from "./utils/image-utils";
+import {buildUrlFromRelative, resolveVaultFolderPath} from "./utils/image-utils";
 
 export default class DivergencesPlusPlugin extends Plugin {
 	settings: MyPluginSettings;
 	private backgroundPicker: BackgroundPickerOverlay | null = null;
 	private cacheWarmupHandle: number | null = null;
 	private cacheWarmupIsIdle = false;
+	private localServerUnsubscribe: (() => void) | null = null;
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
+		await this.syncFromLinkedServer();
 		this.applySelectedBackground();
 		this.ensureBackgroundPicker();
 		this.scheduleCacheWarmup();
@@ -34,6 +42,8 @@ export default class DivergencesPlusPlugin extends Plugin {
 	}
 
 	onunload(): void {
+		this.localServerUnsubscribe?.();
+		this.localServerUnsubscribe = null;
 		this.clearCacheWarmup();
 		this.backgroundPicker?.close();
 		this.backgroundPicker = null;
@@ -51,15 +61,17 @@ export default class DivergencesPlusPlugin extends Plugin {
 	getSelectedImageUrl(): string {
 		const baseUrl = this.settings.serverBaseUrl.trim();
 		const relativePath = this.settings.selectedImagePath.trim();
-		if (!baseUrl || !relativePath) {
-			if (this.settings.useRemoteIndex || !relativePath) {
-				return "";
-			}
+		if (!relativePath) {
+			return "";
+		}
+		const localUrl = this.getLocalImageUrl(relativePath);
+		if (localUrl) {
+			return localUrl;
 		}
 		if (baseUrl) {
 			return buildUrlFromRelative(baseUrl, relativePath);
 		}
-		return this.getLocalImageUrl(relativePath);
+		return "";
 	}
 
 	getCssVariableName(): string {
@@ -83,7 +95,11 @@ export default class DivergencesPlusPlugin extends Plugin {
 		if (!folderPath) {
 			return "";
 		}
-		const normalizedFolder = normalizePath(folderPath);
+		const resolvedFolder = resolveVaultFolderPath(this.app, folderPath);
+		if (resolvedFolder.errorMessage) {
+			return "";
+		}
+		const normalizedFolder = normalizePath(resolvedFolder.folderPath);
 		const normalizedRelative = relativePath.trim().replace(/^\/+/, "");
 		const fullPath = normalizePath(`${normalizedFolder}/${normalizedRelative}`);
 		const file = this.app.vault.getAbstractFileByPath(fullPath);
@@ -115,6 +131,58 @@ export default class DivergencesPlusPlugin extends Plugin {
 
 	async saveSettings(): Promise<void> {
 		await this.saveData(this.settings);
+	}
+
+	getLocalVaultServerApi(): LocalVaultServerApi | null {
+		return getLocalVaultServerApi(this.app);
+	}
+
+	isLinkedToLocalServer(): boolean {
+		return Boolean(this.settings.linkedServerEntryId && this.getLocalVaultServerApi());
+	}
+
+	async syncFromLinkedServer(): Promise<void> {
+		const api = this.getLocalVaultServerApi();
+		if (!api) {
+			return;
+		}
+		if (!this.localServerUnsubscribe) {
+			this.localServerUnsubscribe = api.onSettingsChanged(() => {
+				void this.syncFromLinkedServer();
+			});
+		}
+
+		const entries = api.getServerEntries();
+		const entry = findLocalVaultServerEntry(entries, this.settings.linkedServerEntryId);
+		if (!entry) {
+			return;
+		}
+
+		const nextBaseUrl = buildLocalVaultServerBaseUrl(entry);
+		const resolvedFolder = resolveVaultFolderPath(this.app, entry.serveDir);
+		const nextFolder =
+			resolvedFolder.errorMessage.length > 0 ? entry.serveDir : resolvedFolder.folderPath;
+		const nextAuthToken = entry.authToken ?? "";
+
+		let changed = false;
+		// Only persist when values truly change to avoid extra writes.
+		if (this.settings.serverBaseUrl !== nextBaseUrl) {
+			this.settings.serverBaseUrl = nextBaseUrl;
+			changed = true;
+		}
+		if (this.settings.imageFolderPath !== nextFolder) {
+			this.settings.imageFolderPath = nextFolder;
+			changed = true;
+		}
+		if (this.settings.authToken !== nextAuthToken) {
+			this.settings.authToken = nextAuthToken;
+			changed = true;
+		}
+
+		if (changed) {
+			await this.saveSettings();
+			this.applySelectedBackground();
+		}
 	}
 
 	private ensureBackgroundPicker(): BackgroundPickerOverlay {

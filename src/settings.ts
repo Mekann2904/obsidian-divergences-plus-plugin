@@ -9,16 +9,20 @@ export interface MyPluginSettings {
 	serverBaseUrl: string;
 	imageFolderPath: string;
 	useRemoteIndex: boolean;
+	authToken: string;
 	cssVariableName: string;
 	selectedImagePath: string;
+	linkedServerEntryId: string;
 }
 
 export const DEFAULT_SETTINGS: MyPluginSettings = {
 	serverBaseUrl: "http://127.0.0.1:3000",
 	imageFolderPath: "",
 	useRemoteIndex: false,
+	authToken: "",
 	cssVariableName: "--anp-background-image-dark",
 	selectedImagePath: "",
+	linkedServerEntryId: "",
 };
 
 export class MyPluginSettingTab extends PluginSettingTab {
@@ -31,9 +35,45 @@ export class MyPluginSettingTab extends PluginSettingTab {
 
 	display(): void {
 		const {containerEl} = this;
+		const localServerApi = this.plugin.getLocalVaultServerApi();
+		const localServerEntries = localServerApi?.getServerEntries() ?? [];
+		const isLinked = this.plugin.isLinkedToLocalServer();
 
 		containerEl.empty();
 		containerEl.createEl("h2", {text: "Background picker"});
+
+		containerEl.createEl("h3", {text: "Local Vault Server link"});
+
+		if (!localServerApi) {
+			containerEl.createEl("p", {
+				text: "Local Vault Server plugin is not available. Install and enable it to sync settings.",
+				cls: "setting-item-description",
+			});
+		} else if (localServerEntries.length === 0) {
+			containerEl.createEl("p", {
+				text: "No server entries found. Add one in Local Vault Server settings.",
+				cls: "setting-item-description",
+			});
+		}
+
+		new Setting(containerEl)
+			.setName("Linked server entry")
+			.setDesc("Sync Base URL, folder path, and auth token from Local Vault Server.")
+			.addDropdown((dropdown) => {
+				dropdown.addOption("", "Not linked");
+				for (const entry of localServerEntries) {
+					dropdown.addOption(entry.id, entry.name || entry.id);
+				}
+				dropdown.setValue(this.plugin.settings.linkedServerEntryId);
+				dropdown.onChange(async (value) => {
+					this.plugin.settings.linkedServerEntryId = value;
+					await this.plugin.saveSettings();
+					await this.plugin.syncFromLinkedServer();
+					this.display();
+				});
+			});
+
+		containerEl.createEl("h3", {text: "Image source"});
 
 		new Setting(containerEl)
 			.setName("Base URL")
@@ -44,6 +84,7 @@ export class MyPluginSettingTab extends PluginSettingTab {
 				text
 					.setPlaceholder("http://127.0.0.1:3000")
 					.setValue(this.plugin.settings.serverBaseUrl)
+					.setDisabled(isLinked)
 					.onChange(async (value) => {
 						this.plugin.settings.serverBaseUrl = value.trim();
 						await this.plugin.saveSettings();
@@ -58,6 +99,7 @@ export class MyPluginSettingTab extends PluginSettingTab {
 				text
 					.setPlaceholder("wallpapers")
 					.setValue(this.plugin.settings.imageFolderPath)
+					.setDisabled(isLinked)
 					.onChange(async (value) => {
 						this.plugin.settings.imageFolderPath = value.trim();
 						await this.plugin.saveSettings();
@@ -66,13 +108,28 @@ export class MyPluginSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Use HTTP directory listing")
-			.setDesc("When enabled, the picker reads images from the Base URL.")
+			.setDesc("When enabled, the picker reads images from the Base URL (JSON index if available).")
 			.addToggle((toggle) =>
 				toggle.setValue(this.plugin.settings.useRemoteIndex).onChange(async (value) => {
 					this.plugin.settings.useRemoteIndex = value;
 					await this.plugin.saveSettings();
 				})
 			);
+
+		new Setting(containerEl)
+			.setName("Auth token")
+			.setDesc("Bearer token for the Local Vault Server (optional).")
+			.addText((text) => {
+				text
+					.setPlaceholder("Optional token")
+					.setValue(this.plugin.settings.authToken)
+					.setDisabled(isLinked)
+					.onChange(async (value) => {
+						this.plugin.settings.authToken = value.trim();
+						await this.plugin.saveSettings();
+					});
+				text.inputEl.type = "password";
+			});
 
 		new Setting(containerEl)
 			.setName("CSS variable")

@@ -4,7 +4,13 @@
  * Related: src/main.ts, src/settings.ts, src/utils/image-utils.ts */
 import {App, Notice} from "obsidian";
 import type {MyPluginSettings} from "../settings";
-import {getVaultImageItems, ImageItem} from "../utils/image-utils";
+import {
+	buildImageItemsFromRelativePaths,
+	getRemoteImageItems,
+	getRemoteIndexItems,
+	getVaultImageItems,
+	ImageItem,
+} from "../utils/image-utils";
 
 export interface BackgroundPickerHost {
 	settings: MyPluginSettings;
@@ -237,6 +243,37 @@ export class BackgroundPickerOverlay {
 		this.dialogEl.style.setProperty("--anp-bg-picker-aspect", `${width} / ${height}`);
 	}
 
+	private async loadImageItems(): Promise<{items: ImageItem[]; errorMessage: string}> {
+		const folderPath = this.host.settings.imageFolderPath;
+		if (!this.host.settings.useRemoteIndex) {
+			return getVaultImageItems(this.app, "", folderPath);
+		}
+
+		const baseUrl = this.host.settings.serverBaseUrl.trim();
+		if (!baseUrl) {
+			return {items: [], errorMessage: "Base URL is empty."};
+		}
+
+		const authToken = this.host.settings.authToken?.trim() ?? "";
+		// Prefer the JSON index for speed, then fall back to HTML listings.
+		const indexResult = await getRemoteIndexItems(baseUrl, {
+			authToken,
+			recursive: true,
+		});
+		if (!indexResult.errorMessage) {
+			const relativePaths = indexResult.items.map((item) => item.relativePath);
+			return buildImageItemsFromRelativePaths(this.app, folderPath, relativePaths, baseUrl);
+		}
+
+		const fallback = await getRemoteImageItems(baseUrl, authToken);
+		if (fallback.errorMessage) {
+			return fallback;
+		}
+
+		const fallbackPaths = fallback.items.map((item) => item.relativePath);
+		return buildImageItemsFromRelativePaths(this.app, folderPath, fallbackPaths, baseUrl);
+	}
+
 	private async renderGrid(forceRefresh = false): Promise<void> {
 		if (!this.gridEl || !this.statusEl) {
 			return;
@@ -258,8 +295,7 @@ export class BackgroundPickerOverlay {
 		if (!forceRefresh && cacheKey === this.cachedKey) {
 			result = {items: this.cachedItems, errorMessage: this.cachedError};
 		} else {
-			// Always use local vault URLs for thumbnails to keep the picker fast.
-			result = getVaultImageItems(this.app, "", this.host.settings.imageFolderPath);
+			result = await this.loadImageItems();
 		}
 
 		if (token !== this.renderToken || !this.gridEl || !this.statusEl) {
@@ -413,8 +449,11 @@ export class BackgroundPickerOverlay {
 		const baseUrl = this.host.settings.useRemoteIndex
 			? this.host.settings.serverBaseUrl.trim()
 			: "";
+		const authToken = this.host.settings.useRemoteIndex
+			? this.host.settings.authToken?.trim() ?? ""
+			: "";
 		const folder = this.host.settings.imageFolderPath.trim();
-		return `${mode}|${baseUrl}|${folder}`;
+		return `${mode}|${baseUrl}|${folder}|${authToken}`;
 	}
 
 	private ensureResizeObserver(): void {
