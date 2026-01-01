@@ -418,12 +418,23 @@ export class BackgroundPickerOverlay {
 		}
 
 		const styles = getComputedStyle(this.gridEl);
+		const paddingX =
+			(this.parsePixelValue(styles.paddingLeft) ?? 0) +
+			(this.parsePixelValue(styles.paddingRight) ?? 0);
+		const paddingY =
+			(this.parsePixelValue(styles.paddingTop) ?? 0) +
+			(this.parsePixelValue(styles.paddingBottom) ?? 0);
+		const contentWidth = rect.width - paddingX;
+		const contentHeight = rect.height - paddingY;
+		if (contentWidth <= 0 || contentHeight <= 0) {
+			return;
+		}
 		const gap = this.parsePixelValue(styles.gap) ?? 12;
 		const aspect = Math.max(window.innerWidth / Math.max(window.innerHeight, 1), 0.1);
 		const layout = this.findBestGridLayout(
 			this.itemCount,
-			rect.width,
-			rect.height,
+			contentWidth,
+			contentHeight,
 			aspect,
 			gap
 		);
