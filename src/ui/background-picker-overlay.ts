@@ -44,22 +44,6 @@ export class BackgroundPickerOverlay {
 	private cachedKey: string | null = null;
 	private cachedItems: ImageItem[] = [];
 	private cachedError = "";
-	private imageObserver: IntersectionObserver | null = null;
-
-	private readonly handleImageIntersect = (entries: IntersectionObserverEntry[]): void => {
-		for (const entry of entries) {
-			if (!entry.isIntersecting) {
-				continue;
-			}
-			const img = entry.target as HTMLImageElement;
-			const src = img.dataset.src ?? "";
-			if (src) {
-				img.src = src;
-				img.removeAttribute("data-src");
-			}
-			this.imageObserver?.unobserve(img);
-		}
-	};
 
 	private readonly handleOverlayClick = (event: MouseEvent): void => {
 		if (event.target === this.overlayEl) {
@@ -196,7 +180,6 @@ export class BackgroundPickerOverlay {
 		this.gridEl?.removeEventListener("click", this.handleGridClick);
 		this.resizeObserver?.disconnect();
 		this.resizeObserver = null;
-		this.resetImageObserver();
 		this.overlayEl.remove();
 
 		this.overlayEl = null;
@@ -479,7 +462,6 @@ export class BackgroundPickerOverlay {
 		}
 
 		const token = (this.renderToken += 1);
-		this.resetImageObserver();
 		this.gridEl.innerHTML = "";
 		// Keep selection state so tiles can mark themselves during batch rendering.
 		this.selectedPath = this.normalizeRelativePath(this.host.settings.selectedImagePath);
@@ -546,18 +528,18 @@ export class BackgroundPickerOverlay {
 		const img = document.createElement("img");
 		img.className = "anp-bg-picker-thumb";
 		img.decoding = "async";
-		img.loading = index < 12 ? "eager" : "lazy";
+		img.loading = "eager";
 		if (index < 12) {
 			if ("fetchPriority" in img) {
 				(img as HTMLImageElement & {fetchPriority?: string}).fetchPriority = "high";
 			}
 		}
 		img.alt = item.displayName;
+		img.src = this.buildTileImageUrl(item.url);
 		// Remove tiles that fail to load to avoid showing inaccessible files.
 		img.addEventListener("error", () => {
 			this.handleImageError(tile, img);
 		});
-		this.prepareLazyImage(img, item.url);
 
 		const name = document.createElement("div");
 		name.className = "anp-bg-picker-name";
@@ -600,6 +582,19 @@ export class BackgroundPickerOverlay {
 		return true;
 	}
 
+	private buildTileImageUrl(url: string): string {
+		if (!/^https?:\/\//i.test(url)) {
+			return url;
+		}
+		try {
+			const parsed = new URL(url);
+			parsed.searchParams.set("anp_cache_bust", String(this.renderToken));
+			return parsed.toString();
+		} catch {
+			return url;
+		}
+	}
+
 	private isVaultOnlyError(errorMessage: string): boolean {
 		const message = errorMessage.toLowerCase();
 		return (
@@ -612,7 +607,6 @@ export class BackgroundPickerOverlay {
 		if (!this.gridEl || !tile.isConnected) {
 			return;
 		}
-		this.imageObserver?.unobserve(img);
 		tile.remove();
 		this.itemCount = Math.max(this.itemCount - 1, 0);
 		this.requestGridUpdate();
@@ -732,44 +726,6 @@ export class BackgroundPickerOverlay {
 			this.requestGridUpdate();
 		});
 		this.resizeObserver.observe(this.gridEl);
-	}
-
-	private prepareLazyImage(img: HTMLImageElement, url: string): void {
-		const observer = this.ensureImageObserver();
-		if (!observer) {
-			img.src = url;
-			return;
-		}
-		// Defer image loading until the tile is near the viewport.
-		img.src =
-			"data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==";
-		img.dataset.src = url;
-		observer.observe(img);
-	}
-
-	private ensureImageObserver(): IntersectionObserver | null {
-		if (!this.gridEl) {
-			return null;
-		}
-		if (!("IntersectionObserver" in window)) {
-			return null;
-		}
-		if (!this.imageObserver) {
-			this.imageObserver = new IntersectionObserver(this.handleImageIntersect, {
-				root: this.gridEl,
-				rootMargin: "240px 0px",
-				threshold: 0.01,
-			});
-		}
-		return this.imageObserver;
-	}
-
-	private resetImageObserver(): void {
-		if (!this.imageObserver) {
-			return;
-		}
-		this.imageObserver.disconnect();
-		this.imageObserver = null;
 	}
 
 	private requestGridUpdate(): void {

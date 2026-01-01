@@ -52,6 +52,13 @@ export default class DivergencesPlusPlugin extends Plugin {
 	applySelectedBackground(): void {
 		const url = this.getSelectedImageUrl();
 		if (!url) {
+			if (
+				this.settings.selectedImagePath.trim().length > 0 &&
+				this.isLinkedToVaultFolder()
+			) {
+				void this.clearBackgroundSelection();
+				return;
+			}
 			this.clearCssBackground();
 			return;
 		}
@@ -64,6 +71,10 @@ export default class DivergencesPlusPlugin extends Plugin {
 		if (!relativePath) {
 			return "";
 		}
+		const localUrl = this.getLocalImageUrl(relativePath);
+		if (this.isLinkedToVaultFolder() && !localUrl) {
+			return "";
+		}
 		// When linked or protected, prefer the server URL to avoid showing local-only files.
 		const preferRemote =
 			Boolean(baseUrl) &&
@@ -73,7 +84,6 @@ export default class DivergencesPlusPlugin extends Plugin {
 		if (preferRemote && baseUrl) {
 			return buildUrlFromRelative(baseUrl, relativePath);
 		}
-		const localUrl = this.getLocalImageUrl(relativePath);
 		if (localUrl) {
 			return localUrl;
 		}
@@ -113,6 +123,18 @@ export default class DivergencesPlusPlugin extends Plugin {
 			return "";
 		}
 		return this.app.vault.getResourcePath(file);
+	}
+
+	private isLinkedToVaultFolder(): boolean {
+		if (!this.settings.linkedServerEntryId.trim()) {
+			return false;
+		}
+		const folderPath = this.settings.imageFolderPath.trim();
+		if (!folderPath) {
+			return false;
+		}
+		const resolvedFolder = resolveVaultFolderPath(this.app, folderPath);
+		return resolvedFolder.errorMessage.length === 0;
 	}
 
 	async setBackgroundByRelativePath(relativePath: string): Promise<void> {
