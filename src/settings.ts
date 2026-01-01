@@ -53,7 +53,7 @@ export class MyPluginSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Image folder path")
-			.setDesc("Vault path used to list images (example: wallpapers).")
+			.setDesc("Vault path or absolute path (desktop). Use the same folder as the HTTP server.")
 			.addText((text) =>
 				text
 					.setPlaceholder("wallpapers")

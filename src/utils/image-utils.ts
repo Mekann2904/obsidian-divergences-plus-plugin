@@ -38,7 +38,12 @@ export function getVaultImageItems(
 		return {items: [], errorMessage: "Image folder path is empty."};
 	}
 
-	const trimmedFolderPath = normalizePath(rawFolderPath);
+	const resolvedFolder = resolveVaultFolderPath(app, rawFolderPath);
+	if (resolvedFolder.errorMessage) {
+		return {items: [], errorMessage: resolvedFolder.errorMessage};
+	}
+
+	const trimmedFolderPath = normalizePath(resolvedFolder.folderPath);
 
 	const folder = app.vault.getAbstractFileByPath(trimmedFolderPath);
 	if (!folder || !(folder instanceof TFolder)) {
@@ -132,6 +137,75 @@ export function buildUrlFromRelative(baseUrl: string, relativePath: string): str
 		return "";
 	}
 	return `${trimmedBaseUrl}/${encodePath(trimmedRelativePath)}`;
+}
+
+function resolveVaultFolderPath(
+	app: App,
+	folderPath: string
+): {folderPath: string; errorMessage: string} {
+	const rawInput = folderPath.trim();
+	if (!rawInput) {
+		return {folderPath: "", errorMessage: "Image folder path is empty."};
+	}
+
+	const isAbsolute = isAbsolutePath(rawInput);
+	const normalizedInput = isAbsolute
+		? normalizeAbsolutePath(rawInput)
+		: normalizePath(rawInput);
+
+	if (!isAbsolute) {
+		return {folderPath: normalizedInput, errorMessage: ""};
+	}
+
+	const basePath = getVaultBasePath(app);
+	if (!basePath) {
+		return {
+			folderPath: "",
+			errorMessage: "Absolute paths require a desktop vault.",
+		};
+	}
+
+	const normalizedBase = normalizeAbsolutePath(basePath);
+	const baseWithSlash = normalizedBase.endsWith("/")
+		? normalizedBase
+		: `${normalizedBase}/`;
+	if (normalizedInput !== normalizedBase && !normalizedInput.startsWith(baseWithSlash)) {
+		return {
+			folderPath: "",
+			errorMessage: "Folder must be inside the vault.",
+		};
+	}
+
+	const relative = normalizedInput.slice(normalizedBase.length).replace(/^\/+/, "");
+	if (!relative) {
+		return {
+			folderPath: "",
+			errorMessage: "Image folder path resolves to the vault root.",
+		};
+	}
+
+	// Convert absolute paths to vault-relative paths for Obsidian APIs.
+	return {folderPath: relative, errorMessage: ""};
+}
+
+function getVaultBasePath(app: App): string {
+	const adapter = app.vault.adapter as unknown as {getBasePath?: () => string};
+	if (typeof adapter.getBasePath === "function") {
+		return adapter.getBasePath();
+	}
+	return "";
+}
+
+function isAbsolutePath(value: string): boolean {
+	return value.startsWith("/") || /^[A-Za-z]:\//.test(value);
+}
+
+function normalizeAbsolutePath(value: string): string {
+	const normalized = normalizePath(value).replace(/^\/+/, "");
+	if (value.startsWith("/")) {
+		return `/${normalized}`;
+	}
+	return normalized;
 }
 
 function collectImageFiles(folder: TFolder, output: TFile[]): void {

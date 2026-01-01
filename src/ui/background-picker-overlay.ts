@@ -4,7 +4,7 @@
  * Related: src/main.ts, src/settings.ts, src/utils/image-utils.ts */
 import {App, Notice} from "obsidian";
 import type {MyPluginSettings} from "../settings";
-import {getRemoteImageItems, getVaultImageItems, ImageItem} from "../utils/image-utils";
+import {getVaultImageItems, ImageItem} from "../utils/image-utils";
 
 export interface BackgroundPickerHost {
 	settings: MyPluginSettings;
@@ -223,15 +223,9 @@ export class BackgroundPickerOverlay {
 		let result;
 		if (!forceRefresh && cacheKey === this.cachedKey) {
 			result = {items: this.cachedItems, errorMessage: this.cachedError};
-		} else if (this.host.settings.useRemoteIndex) {
-			result = await getRemoteImageItems(this.host.settings.serverBaseUrl);
 		} else {
-			// Resolve vault images and map them to server URLs.
-			result = getVaultImageItems(
-				this.app,
-				this.host.settings.serverBaseUrl,
-				this.host.settings.imageFolderPath
-			);
+			// Always use local vault URLs for thumbnails to keep the picker fast.
+			result = getVaultImageItems(this.app, "", this.host.settings.imageFolderPath);
 		}
 
 		if (token !== this.renderToken || !this.gridEl || !this.statusEl) {
@@ -381,7 +375,10 @@ export class BackgroundPickerOverlay {
 
 	private getCacheKey(): string {
 		const mode = this.host.settings.useRemoteIndex ? "remote" : "vault";
-		const baseUrl = this.host.settings.serverBaseUrl.trim();
+		// Base URL only affects remote mode; vault thumbnails ignore it.
+		const baseUrl = this.host.settings.useRemoteIndex
+			? this.host.settings.serverBaseUrl.trim()
+			: "";
 		const folder = this.host.settings.imageFolderPath.trim();
 		return `${mode}|${baseUrl}|${folder}`;
 	}
