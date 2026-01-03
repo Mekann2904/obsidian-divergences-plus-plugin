@@ -11,6 +11,7 @@ import {
 } from "./integrations/local-vault-server";
 import {DEFAULT_SETTINGS, MyPluginSettings, MyPluginSettingTab} from "./settings";
 import {BackgroundPickerOverlay} from "./ui/background-picker-overlay";
+import {normalizeRgbaString} from "./utils/color-utils";
 import {buildUrlFromRelative, resolveVaultFolderPath} from "./utils/image-utils";
 
 export default class DivergencesPlusPlugin extends Plugin {
@@ -19,9 +20,11 @@ export default class DivergencesPlusPlugin extends Plugin {
 	private cacheWarmupHandle: number | null = null;
 	private cacheWarmupIsIdle = false;
 	private localServerUnsubscribe: (() => void) | null = null;
+	private themeStyleEl: HTMLStyleElement | null = null;
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
+		this.applyThemeColors();
 		await this.syncFromLinkedServer();
 		this.applySelectedBackground();
 		this.ensureBackgroundPicker();
@@ -45,6 +48,8 @@ export default class DivergencesPlusPlugin extends Plugin {
 		this.localServerUnsubscribe?.();
 		this.localServerUnsubscribe = null;
 		this.clearCacheWarmup();
+		this.themeStyleEl?.remove();
+		this.themeStyleEl = null;
 		this.backgroundPicker?.close();
 		this.backgroundPicker = null;
 	}
@@ -104,6 +109,20 @@ export default class DivergencesPlusPlugin extends Plugin {
 	clearCssBackground(): void {
 		const cssVar = this.getCssVariableName();
 		document.body.style.removeProperty(cssVar);
+	}
+
+	applyThemeColors(): void {
+		const base00 = normalizeRgbaString(
+			this.settings.themeDarkBase00,
+			DEFAULT_SETTINGS.themeDarkBase00
+		);
+		const base10 = normalizeRgbaString(
+			this.settings.themeDarkBase10,
+			DEFAULT_SETTINGS.themeDarkBase10
+		);
+		// Scope the variables to dark theme without touching light mode.
+		const css = `.theme-dark {\n  --my-color-base-00: ${base00};\n  --my-color-base-10: ${base10};\n}\n`;
+		this.ensureThemeStyleEl().textContent = css;
 	}
 
 	private getLocalImageUrl(relativePath: string): string {
@@ -261,6 +280,16 @@ export default class DivergencesPlusPlugin extends Plugin {
 			this.backgroundPicker = new BackgroundPickerOverlay(this.app, this);
 		}
 		return this.backgroundPicker;
+	}
+
+	private ensureThemeStyleEl(): HTMLStyleElement {
+		if (!this.themeStyleEl) {
+			const styleEl = document.createElement("style");
+			styleEl.id = "anp-theme-colors";
+			document.head.appendChild(styleEl);
+			this.themeStyleEl = styleEl;
+		}
+		return this.themeStyleEl;
 	}
 
 	private scheduleCacheWarmup(): void {

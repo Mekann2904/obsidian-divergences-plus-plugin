@@ -119,6 +119,158 @@
 	display: none;
 }
 
+/* RGBA settings control */
+.anp-color-control {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	min-width: 280px;
+}
+
+.anp-color-setting {
+	align-items: flex-start;
+}
+
+.anp-color-setting .setting-item-control {
+	width: 100%;
+}
+
+.anp-color-picker {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 10px;
+	border-radius: 12px;
+	border: 1px solid var(--background-modifier-border);
+	background: var(--background-secondary);
+}
+
+.anp-color-sv {
+	position: relative;
+	height: 160px;
+	border-radius: 10px;
+	overflow: hidden;
+	cursor: crosshair;
+	touch-action: none;
+	background:
+		linear-gradient(to top, rgba(0, 0, 0, 1), rgba(0, 0, 0, 0)),
+		linear-gradient(to right, rgba(255, 255, 255, 1), hsl(var(--anp-color-hue, 0), 100%, 50%));
+}
+
+.anp-color-sv-handle {
+	position: absolute;
+	width: 12px;
+	height: 12px;
+	border-radius: 50%;
+	border: 2px solid #fff;
+	box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+	transform: translate(-6px, -6px);
+	pointer-events: none;
+}
+
+.anp-color-sliders {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.anp-color-slider {
+	width: 100%;
+	height: 12px;
+	border-radius: 999px;
+	border: 1px solid var(--background-modifier-border);
+	background: var(--background-primary);
+	appearance: none;
+	-webkit-appearance: none;
+}
+
+.anp-color-slider::-webkit-slider-thumb {
+	-webkit-appearance: none;
+	appearance: none;
+	width: 16px;
+	height: 16px;
+	border-radius: 50%;
+	border: 1px solid var(--background-modifier-border);
+	background: var(--background-primary);
+	box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+	cursor: pointer;
+}
+
+.anp-color-slider::-moz-range-thumb {
+	width: 16px;
+	height: 16px;
+	border-radius: 50%;
+	border: 1px solid var(--background-modifier-border);
+	background: var(--background-primary);
+	box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+	cursor: pointer;
+}
+
+.anp-color-hue {
+	background: linear-gradient(
+		to right,
+		#ff0000 0%,
+		#ffff00 17%,
+		#00ff00 33%,
+		#00ffff 50%,
+		#0000ff 67%,
+		#ff00ff 83%,
+		#ff0000 100%
+	);
+}
+
+.anp-color-fields {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 8px;
+}
+
+.anp-color-field {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	align-items: stretch;
+}
+
+.anp-color-number {
+	width: 100%;
+	padding: 4px 6px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	background: var(--background-primary);
+	color: var(--text-normal);
+	font-size: var(--font-ui-small);
+}
+
+.anp-color-label {
+	text-align: center;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+
+.anp-color-actions {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.anp-color-preview {
+	width: 36px;
+	height: 36px;
+	border-radius: 8px;
+	border: 1px solid var(--background-modifier-border);
+	background: var(--background-secondary);
+}
+
+.anp-color-reset {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	background: var(--background-primary);
+	padding: 4px 10px;
+	cursor: pointer;
+}
+
 @media (max-width: 700px) {
 	.anp-bg-picker-dialog {
 		width: 100%;
